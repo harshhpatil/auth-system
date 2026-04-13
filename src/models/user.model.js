@@ -30,18 +30,20 @@ const userSchema = new mongoose.Schema(
     },
     emailVerificationToken: String,
     emailVerificationTokenExpiry: Date,
+    passwordResetToken: String,
+    passwordResetTokenExpiry: Date,
   },
   { timestamps: true },
 );
 
-// creating the pre-hook for hashing the password
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next(); // if the password is not modified then move to the next middleware
-  this.password = await bcrypt.hash(this.password, 13); // hashing the password
+// creating the pre-hook for normalizing email and hashing password
+userSchema.pre("save", async function () {
+  if (this.isModified("email")) {
+    this.email = this.email.toLowerCase().trim(); // normalizing the email
+  }
 
-  if (!this.isModified("email")) return next(); // if the email is not modified then move to the next middleware
-  this.email = this.email.toLowerCase().trim(); // normalizing the email
-  next();
+  if (!this.isModified("password")) return;
+  this.password = await bcrypt.hash(this.password, 13); // hashing the password
 });
 
 // creating the method to compare the password

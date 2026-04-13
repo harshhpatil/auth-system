@@ -6,8 +6,9 @@ import {
   generateRefreshToken,
   hashToken,
   verifyToken,
+  passwordResetToken,
 } from "../services/token.service.js";
-import { sendVerificationEmail } from "../services/email.service.js";
+import { sendWelcomeEmail, sendVerificationEmail, sendPasswordResetEmail } from "../services/email.service.js";
 
 // login controller function
 export const login = async (req, res) => {
@@ -81,13 +82,16 @@ export const register = async (req, res) => {
     if (!email || !password)
       return res.status(400).json({ message: "invalid credentials" });
 
+    // normalizing the email before checking
+    let normalizedEmail = email.toLowerCase().trim();
+    
     // checking if the user already exits in the database or not & returning if does
-    let normalizedEmail = email.toLowerCase().trim(); // normalizing the email
     const user = await User.findOne({ email: normalizedEmail });
     if (user) return res.status(400).json({ message: "user already exists" });
 
     // generating verification token
     const emailVerificationToken = crypto.randomBytes(32).toString("hex");
+    const emailVerificationTokenHash = await hashToken(emailVerificationToken); // hashing the verification token to store in database
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
     // creating new user from the above credentials in the database
@@ -95,7 +99,7 @@ export const register = async (req, res) => {
       email: normalizedEmail,
       password,
       role: "user",
-      emailVerificationToken: emailVerificationToken,
+      emailVerificationToken: emailVerificationTokenHash,
       emailVerificationTokenExpiry: tokenExpiry,
       emailVerified: false,
     });
@@ -112,6 +116,7 @@ export const register = async (req, res) => {
     }
     const verificationLink = `${baseURL}/api/v1/auth/verify-email?token=${emailVerificationToken}`; // creating the verification link to be sent in the email
 
+
     // sending verification email
     await sendVerificationEmail(newUser.email, verificationLink);
 
@@ -127,6 +132,37 @@ export const register = async (req, res) => {
   }
 };
 
+// welcome email controller function
+export const welcomeEmail = async (req, res) => {
+  try {
+    // getting the user id from the request params and checking if it is present or not
+    const userId = req.params.userId;
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required" });
+    }
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    // checking if the email is verified or not 
+    if (!user.emailVerified) {
+      return res.status(403).json({
+        message: "Email not verified. Please verify your email to receive welcome email.",
+      });
+    }
+
+    // sending the welcome email
+    await sendWelcomeEmail(user.email);
+
+    return res.status(200).json({ message: "Welcome email sent successfully" });
+
+  } catch (err) {
+    console.error("error in welcome email controller", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+}
+
 // verify email controller function
 export const verifyEmail = async (req, res) => {
   try {
@@ -140,22 +176,35 @@ export const verifyEmail = async (req, res) => {
     }
 
     // finding user by token and checking if token is not expired
-    const user = await User.findOne({
-      emailVerificationToken: token,
+    const users = await User.find({
+      emailVerificationToken: { $exists: true, $ne: null }, // loading all the users which have the emailVerificationToken field set (means they are not verified yet)
       emailVerificationTokenExpiry: { $gt: new Date() }, // token must be in future
     });
 
+    // finding the user by comparing the token with the hashed token in database
+    let user = null;
+    for (const u of users) {
+      const isMatch = await verifyToken(token, u.emailVerificationToken);
+      if (isMatch) {
+        user = u;
+        break;
+      }
+    }
+    
     if (!user) {
       return res.status(400).json({
         message: "Invalid or expired verification token",
       });
     }
-
+    
     // marking email as verified and clearing token
     user.emailVerified = true;
     user.emailVerificationToken = undefined;
     user.emailVerificationTokenExpiry = undefined;
     await user.save();
+
+    // sending welcome email
+    await sendWelcomeEmail(user.email);
 
     // sending success response
     return res.status(200).json({
@@ -167,24 +216,25 @@ export const verifyEmail = async (req, res) => {
   }
 };
 
-// refresh token controller function
+// refresh tokens controller function
 export const refreshToken = async (req, res) => {
   try {
     // checking the credentials are valid or not and returning if not valid
     const { refreshToken } = req.cookies;
     if (!refreshToken) return res.status(401).json({ message: "unauthorized" });
     // finding active sessions and matching refresh token against stored hash
-    const sessions = await Session.find({
+    let matchedSession = null;
+    
+    // query sessions (could be optimized with indexing in production)
+    const sessions = await Session.findOne({
       revoked: false,
       expiresAt: { $gt: new Date() },
-    });
-
-    let matchedSession = null;
-    for (const session of sessions) {
-      const isMatch = await verifyToken(refreshToken, session.tokenHash);
+    }).sort({ createdAt: -1 });
+    
+    if (sessions) {
+      const isMatch = await verifyToken(refreshToken, sessions.tokenHash);
       if (isMatch) {
-        matchedSession = session;
-        break;
+        matchedSession = sessions;
       }
     }
 
@@ -192,11 +242,19 @@ export const refreshToken = async (req, res) => {
       return res.status(401).json({ message: "unauthorized" });
     }
 
-    // loading user and issuing new access token
+    // loading user and issuing new tokens
     const user = await User.findById(matchedSession.user);
     if (!user) return res.status(401).json({ message: "unauthorized" });
 
     const newAccessToken = generateAccessToken(user);
+    const newRefreshToken = generateRefreshToken();
+    const newRefreshTokenHash = await hashToken(newRefreshToken);
+
+    // rotate refresh token in the same session (one session per device)
+    matchedSession.tokenHash = newRefreshTokenHash;
+    matchedSession.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    matchedSession.revoked = false;
+    await matchedSession.save();
 
     // setting the new access token in the cookies
     res.cookie("accessToken", newAccessToken, {
@@ -206,9 +264,17 @@ export const refreshToken = async (req, res) => {
       secure: process.env.NODE_ENV === "production", // for production setting it to true
     });
 
+    // setting the rotated refresh token in the cookies
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: process.env.NODE_ENV === "production", // for production setting it to true
+    });
+
     return res
       .status(200)
-      .json({ message: "access token refreshed successfully" });
+      .json({ message: "tokens refreshed successfully" });
   } catch (err) {
     console.error("error in refresh token controller", err);
     res.status(500).json({ message: "Internal server error" });
@@ -223,10 +289,10 @@ export const logout = async (req, res) => {
     if (!refreshToken) return res.status(401).json({ message: "unauthorized" });
 
     // finding all active sessions and matching refresh token
-    const sessions = await Session.find({ revoked: false });
+    let matchedSession = null;
+    const sessions = await Session.find({ revoked: false }).limit(100).select('_id tokenHash user'); // add limit for safety
 
     // finding the matched sessions
-    let matchedSession = null;
     for (const session of sessions) {
       const isMatch = await verifyToken(refreshToken, session.tokenHash);
       if (isMatch) {
@@ -243,11 +309,206 @@ export const logout = async (req, res) => {
     await matchedSession.save();
 
     // clearing the access and refresh token cookie
-    res.clearCookie("accessToken", "", { httpOnly: true, maxAge: 0 });
-    res.clearCookie("refreshToken", "", { httpOnly: true, maxAge: 0 });
+    res.clearCookie("accessToken", { httpOnly: true, maxAge: 0 });
+    res.clearCookie("refreshToken", { httpOnly: true, maxAge: 0 });
     return res.status(200).json({ message: "logged out successfully" });
   } catch (err) {
     console.error("error in logout controller", err);
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// change password controller function
+export const changePassword = async (req, res) => {
+  try {
+    const userId = req.user._id; // getting the user id from the headers
+    const { oldPassword, newPassword } = req.body; // getting the current and new password from the request body
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ message: "current and new password are required" });
+    }
+
+    // finding the user in the databse
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "user not found" });
+    }
+
+    // comparing the current password with the hashed password in the database. if valid changing to new password if not then returning
+    const isPasswordValid = await user.comparePassword(oldPassword);
+    if(!isPasswordValid) {
+      return res.status(401).json({ message: "current password is incorrect" });
+    }
+    if(oldPassword === newPassword) {
+      return res.status(400).json({ message: "new password must be different from current password" });
+    }
+    user.password = newPassword; // setting the new password
+    user.tokenVersion += 1; // incrementing the token version to invalidate existing tokens
+    await Session.updateMany({ user: user._id, revoked: false }, { revoked: true }); // revoke all existing sessions for the user
+    // clearing the access and refresh token cookie
+    res.clearCookie("accessToken", { httpOnly: true, maxAge: 0 });
+    res.clearCookie("refreshToken", { httpOnly: true, maxAge: 0 });
+
+    await user.save(); // saving the user with the new password
+
+    // sending the response to the client
+    return res.status(200).json({ message: "password changed successfully" });
+  } catch (err) {
+    console.error("error in change password controller", err);
+    res.status(500).json({ message: "Internal server error" }); 
+  }
+
+}
+
+// forget password controller function
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body; // getting the email from the request body
+    const successMessage =
+      "If an account with that email exists, a password reset link has been sent.";
+
+    // finding the user in the database
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
+    if (!user) {
+      return res.status(200).json({ message: successMessage });
+    }
+
+    // generating password reset token and building the password reset link
+    const { resetToken, hashedResetToken } = passwordResetToken();
+    const baseURL = process.env.FRONTEND_URL || process.env.CLIENT_URL;
+    if (!baseURL) {
+      console.error(
+        "FRONTEND_URL or CLIENT_URL is not defined for password reset links",
+      );
+      return res
+        .status(500)
+        .json({ message: "Internal server error: reset URL not configured" });
+    }
+    const resetLink = `${baseURL}/reset-password?token=${resetToken}`;
+
+    // storing the hashed reset token in the user model
+    user.passwordResetToken = hashedResetToken;
+    user.passwordResetTokenExpiry = new Date(Date.now() + 1 * 60 * 60 * 1000); // 1 hour
+    await user.save();
+
+    // sending the password reset email
+    await sendPasswordResetEmail(user.email, resetLink);
+    return res.status(200).json({ message: successMessage });
+
+  } catch (err) {    
+    console.error("error in forgot password controller", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// reset password controller function
+export const resetPassword = async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    const hashedResetToken = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    const user = await User.findOne({
+      passwordResetToken: hashedResetToken,
+      passwordResetTokenExpiry: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: "Invalid or expired reset token" });
+    }
+
+    user.password = newPassword;
+    user.passwordResetToken = undefined;
+    user.passwordResetTokenExpiry = undefined;
+    user.tokenVersion += 1;
+
+    await Session.updateMany({ user: user._id, revoked: false }, { revoked: true });
+    await user.save();
+
+    res.clearCookie("accessToken", { httpOnly: true, maxAge: 0 });
+    res.clearCookie("refreshToken", { httpOnly: true, maxAge: 0 });
+
+    return res.status(200).json({ message: "Password reset successfully" });
+  } catch (err) {
+    console.error("error in reset password controller", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// session controller function
+export const getSessions = async (req, res) => {
+  try {
+    const userId = req.user._id; // getting the user id from the headers
+
+    // finding all sessions for the user
+    const sessions = await Session.find({ user: userId}).select("-tokenHash").sort({ createdAt: -1 }); // excluding tokenHash from the response and sorting by createdAt in descending order
+
+    return res.status(200).json({ sessions });
+  } catch (err) {
+    console.error("error in get sessions controller", err);
+    res.status(500).json({ message: "internal server error" });
+  }
+};
+
+// logout session controller function
+export const logoutSession = async (req, res) => {
+  try {
+    const userId = req.user._id; // getting the user id from the headers
+    const sessionId = req.params.sessionId; // getting the session id from the request params
+
+    // finding the user in the databse and returning if user not found
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "user not found" });
+    }
+
+    // finding the session in the database and checking if it belongs to the user or not
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return res.status(404).json({ message: "session not found" });
+    }
+    if (session.user.toString() !== userId.toString()) {
+      return res.status(403).json({ message: "unauthorized" });
+    }
+
+    // revoking the session
+    session.revoked = true;
+    await session.save();
+
+    // updating the token version
+    user.tokenVersion += 1;
+    await user.save();
+
+    return res.status(200).json({ message: "session logged out successfully" });
+  } catch (err) {
+    console.error("error in logout session controller", err);
+    res.status(500).json({ message: "internal server error" });
+  }
+};
+
+// logout all sessions controller function 
+export const logoutAllSessions = async (req, res) => {
+  try {
+    const userId = req.user._id; // getting the user id from the headers
+
+    // finding the user in the databse and returning if user not found
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "user not found" });
+    }
+
+    // revoking all sessions for the user
+    await Session.updateMany({ user: userId, revoked: false }, { revoked: true });
+
+    // updating the token version
+    user.tokenVersion += 1;
+    await user.save();
+
+    return res.status(200).json({ message: "all sessions logged out successfully" });
+  } catch (err) {
+    console.error("error in logout all sessions controller", err);
+    res.status(500).json({ message: "internal server error" });
   }
 };

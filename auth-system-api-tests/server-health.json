@@ -1,0 +1,21 @@
+{
+  "name": "server-health",
+  "rank": "auntit17724436563401",
+  "request": {
+    "type": "http",
+    "url": "https://127.0.0.1:5000/health",
+    "scripts": {
+      "preRequest": "",
+      "postResponse": ""
+    },
+    "method": "GET",
+    "queryParams": [],
+    "headers": [],
+    "body": "",
+    "contentType": "text/plain",
+    "auth": {
+      "currentAuthType": "INHERIT",
+      "authConfigStore": {}
+    }
+  }
+}

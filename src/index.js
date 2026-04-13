@@ -1,25 +1,24 @@
 import "dotenv/config";
-import app from "./app.js";
 import dbConnection from "./config/dbConnection.js";
+import app from "./app.js";
 
+// defining the constants
 const PORT = process.env.PORT;
-if (!PORT) {
-  console.error(
-    "PORT is not defined or loaded properly from the environment variables",
-  );
-  process.exit(1);
-}
+const HEALTH_URL = `http://127.0.0.1:${PORT}/health`;
 
+// function for starting the server
 async function startServer() {
-  try {
-    await dbConnection(); // connecting to the database
-
-    app.listen(PORT, () => {
-      console.log(`server is successfully running on port ${PORT}`);
-    });
-  } catch (err) {
-    console.error("error in starting the server", err);
+  if (!PORT) {
+    throw new Error("PORT env variable doesn't exists or not loaded properly");
   }
+
+  await dbConnection();
+  app.listen(process.env.PORT, () => {
+    console.log(
+      `server successfully running on ${PORT}. \ncheck the health of the server: ${HEALTH_URL}`,
+    );
+  });
 }
 
-startServer(); // starting the server
+// calling the startServer function
+startServer();

@@ -11,13 +11,13 @@ function generateAccessToken(user) {
       tokenVersion: user.tokenVersion,
     },
     process.env.JWT_SECRET,
-    { expiresIn: "10m" },
+    { expiresIn: "15m" },
   );
 }
 
 // function to generate refresh token
 function generateRefreshToken() {
-  return crypto.randomBytes(64).toString("hex");
+  return crypto.randomUUID();
 }
 
 // function to generate hashed token
@@ -30,4 +30,14 @@ function verifyToken(token, hashedToken) {
   return bcrypt.compare(token, hashedToken);
 }
 
-export { generateAccessToken, generateRefreshToken, hashToken, verifyToken }; // exporting the functions
+// function to generate password reset token
+function passwordResetToken(){
+  // generating a random token using crypto module
+  const resetToken = crypto.randomBytes(32).toString("hex");
+  // hashing the token before saving to the database
+  const hashedResetToken = crypto.createHash("sha256").update(resetToken).digest("hex");
+  // returning both the reset token and the hashed reset token
+  return { resetToken, hashedResetToken };  
+}
+
+export { generateAccessToken, generateRefreshToken, hashToken, verifyToken, passwordResetToken }; // exporting the functions

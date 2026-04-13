@@ -59,6 +59,7 @@ const sendWelcomeEmail = async (email) => {
         <h2>Welcome!</h2>
         <p>Your account has been successfully created.</p>
         <p>We're excited to have you on board.</p>
+        <p>Feel free to explore and let us know if you have any questions. Also verify the email address associated with your account for seamless experience.</p>
       `,
     });
 
