@@ -11,4 +11,4 @@ const roleguard = (rolesAllowed) => {
   };
 };
 
-export default roleguard;
+export default roleguard; // exporting the roleguard function

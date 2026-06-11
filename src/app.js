@@ -7,9 +7,16 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
+// importing the written middlewares
+import requestLogger from "./middleware/requestLogger.middleware.js";
+import errorHandler from "./middleware/error.middleware.js";
+
 // importing the routes
 import authRoutes from "./routes/auth.routes.js";
 import userRoutes from "./routes/user.routes.js";
+
+// mount request logger before routes
+app.use(requestLogger);
 
 // defining the routes
 app.use("/api/v1/auth", authRoutes);
@@ -18,4 +25,7 @@ app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", message: "health check done" });
 });
 
-export default app; // exporting the 
+// global error handler
+app.use(errorHandler);
+
+export default app; // exporting the app

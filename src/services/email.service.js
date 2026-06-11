@@ -1,4 +1,5 @@
 import transporter from "../utils/email.js";
+import logger from "../utils/logger.js";
 
 // function to send the verification email
 const sendVerificationEmail = async (email, verificationLink) => {
@@ -17,10 +18,8 @@ const sendVerificationEmail = async (email, verificationLink) => {
         <p>This link will expire soon.</p>
       `,
     });
-
-    console.log("Verification email sent");
   } catch (error) {
-    console.error("error sending verification email:", error);
+    logger.error("error sending verification email:", error);
     throw new Error("email could not be sent");
   }
 };
@@ -43,7 +42,7 @@ const sendPasswordResetEmail = async (email, passwordResetLink) => {
         `,
     });
   } catch (err) {
-    console.error("error sending password reset email", err);
+    logger.error("error sending password reset email", err);
     throw new Error("email could not be sent");
   }
 };
@@ -62,10 +61,8 @@ const sendWelcomeEmail = async (email) => {
         <p>Feel free to explore and let us know if you have any questions. Also verify the email address associated with your account for seamless experience.</p>
       `,
     });
-
-    console.log("Welcome email sent");
   } catch (error) {
-    console.error("Error sending welcome email:", error);
+    logger.error("Error sending welcome email:", error);
     throw new Error("Email could not be sent");
   }
 };

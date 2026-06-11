@@ -18,4 +18,4 @@ const validate = (schema) => {
   };
 };
 
-export default validate;// exporting the validation middleware function
+export default validate; // exporting the validation middleware function

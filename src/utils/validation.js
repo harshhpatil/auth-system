@@ -40,10 +40,12 @@ export const changePasswordSchema = Joi.object({
     }),
 });
 
+// validation schema for forgot password containing email
 export const forgotPasswordSchema = Joi.object({
   email: Joi.string().email().required(),
 });
 
+// validation schema for reset password containing token and new password with specified requirements
 export const resetPasswordSchema = Joi.object({
   token: Joi.string().required(),
   newPassword: Joi.string()

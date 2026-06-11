@@ -4,6 +4,9 @@ import crypto from "node:crypto";
 
 // function to generate access token
 function generateAccessToken(user) {
+  if (!process.env.JWT_SECRET || !user) {
+    throw new Error("JWT_SECRET env variable is not defined");
+  }
   return jwt.sign(
     {
       userId: user._id,
@@ -31,13 +34,22 @@ function verifyToken(token, hashedToken) {
 }
 
 // function to generate password reset token
-function passwordResetToken(){
+function passwordResetToken() {
   // generating a random token using crypto module
   const resetToken = crypto.randomBytes(32).toString("hex");
   // hashing the token before saving to the database
-  const hashedResetToken = crypto.createHash("sha256").update(resetToken).digest("hex");
+  const hashedResetToken = crypto
+    .createHash("sha256")
+    .update(resetToken)
+    .digest("hex");
   // returning both the reset token and the hashed reset token
-  return { resetToken, hashedResetToken };  
+  return { resetToken, hashedResetToken };
 }
 
-export { generateAccessToken, generateRefreshToken, hashToken, verifyToken, passwordResetToken }; // exporting the functions
+export {
+  generateAccessToken,
+  generateRefreshToken,
+  hashToken,
+  verifyToken,
+  passwordResetToken,
+}; // exporting the functions

@@ -1,4 +1,16 @@
 import nodemailer from "nodemailer";
+import logger from "./logger.js";
+
+// validating email credentials from environment variables
+if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+  logger.error(
+    "EMAIL_USER and EMAIL_PASS env variables must be set for sending emails",
+  );
+
+  throw new Error(
+    "EMAIL_USER and EMAIL_PASS env variables must be set for sending emails",
+  );
+}
 
 // creating the transporter for sending emails
 const transporter = nodemailer.createTransport({
@@ -9,4 +21,4 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-export default  transporter; // exporting the transporter
+export default transporter; // exporting the transporter
